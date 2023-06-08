@@ -115,6 +115,7 @@ type Statement struct {
 }
 
 func (s Statement) Handle(conn *pgx.Conn) error {
+	fmt.Println(s.Query)
 	_, err := conn.Exec(s.Query)
 	return err
 }

@@ -2,7 +2,10 @@ package main
 
 import (
 	"bufio"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"io/ioutil"
 	stdlog "log"
 	"net/http"
 	"os"
@@ -41,6 +44,7 @@ var (
 	runPort        = run.Flag("port", "PostgreSQL database port").Default("5432").Uint16()
 	runDatname     = run.Flag("database", "PostgreSQL root database").Default("postgres").String()
 	runUser        = run.Flag("user", "PostgreSQL root user").Default("postgres").String()
+	runPassword    = run.Flag("password", "PostgreSQL root password").String()
 	runReplayRate  = run.Flag("replay-rate", "Rate of playback, will execute queries at Nx speed").Default("1").Float()
 	runErrlogInput = run.Flag("errlog-input", "Path to PostgreSQL errlog").ExistingFile()
 	runJsonInput   = run.Flag("json-input", "Path to preprocessed pgreplay JSON log file").ExistingFile()
@@ -126,15 +130,28 @@ func main() {
 		outputFile.Close()
 
 	case run.FullCommand():
+		tlsConfig := new(tls.Config)
+		rootCertPool := x509.NewCertPool()
+		pem, err := ioutil.ReadFile("global-bundle.pem")
+		if err != nil {
+			panic("failed to load root cert")
+		}
+		if ok := rootCertPool.AppendCertsFromPEM(pem); !ok {
+			panic("failed to append certs")
+		}
+		tlsConfig.RootCAs = rootCertPool
+		tlsConfig.InsecureSkipVerify = true
+
 		database, err := pgreplay.NewDatabase(
 			pgx.ConnConfig{
-				Host:     *runHost,
-				Port:     *runPort,
-				Database: *runDatname,
-				User:     *runUser,
+				Host:      *runHost,
+				Port:      *runPort,
+				Database:  *runDatname,
+				User:      *runUser,
+				Password:  *runPassword,
+				TLSConfig: tlsConfig,
 			},
 		)
-
 		if err != nil {
 			logger.Log("event", "postgres.error", "error", err)
 			os.Exit(255)
