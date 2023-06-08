@@ -3,6 +3,7 @@ package pgreplay
 import (
 	"bufio"
 	"bytes"
+	"encoding/csv"
 	"fmt"
 	"io"
 	"regexp"
@@ -80,15 +81,24 @@ func ParseJSON(jsonlog io.Reader) (items chan Item, errs chan error, done chan e
 // parsing errors are returned down the errs channel, and we signal having finished our
 // parsing by sending a value down the done channel.
 func ParseErrlog(errlog io.Reader) (items chan Item, errs chan error, done chan error) {
-	unbounds := map[SessionID]*Execute{}
-	loglinebuffer, parsebuffer := make([]byte, MaxLogLineSize), make([]byte, MaxLogLineSize)
-	scanner := NewLogScanner(errlog, loglinebuffer)
+	reader := csv.NewReader(errlog)
+	// unbounds := map[SessionID]*Execute{}
+	// loglinebuffer, parsebuffer := make([]byte, MaxLogLineSize), make([]byte, MaxLogLineSize)
+	// scanner := NewLogScanner(errlog, loglinebuffer)
 
 	items, errs, done = make(chan Item, ItemBufferSize), make(chan error), make(chan error)
 
 	go func() {
-		for scanner.Scan() {
-			item, err := ParseItem(scanner.Text(), unbounds, parsebuffer)
+		for {
+			logline, err := reader.Read()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				logLinesErrorTotal.Inc()
+				errs <- err
+			}
+			item, err := ParseItem(logline)
 			if err != nil {
 				logLinesErrorTotal.Inc()
 				errs <- err
@@ -108,7 +118,7 @@ func ParseErrlog(errlog io.Reader) (items chan Item, errs chan error, done chan 
 		close(items)
 		close(errs)
 
-		done <- scanner.Err()
+		// done <- reader.Error()
 		close(done)
 	}()
 
@@ -116,27 +126,25 @@ func ParseErrlog(errlog io.Reader) (items chan Item, errs chan error, done chan 
 }
 
 const (
-	LogConnectionAuthorized       = "LOG:  connection authorized: "
-	LogConnectionReceived         = "LOG:  connection received: "
-	LogConnectionDisconnect       = "LOG:  disconnection: "
-	LogStatement                  = "LOG:  statement: "
-	LogDuration                   = "LOG:  duration: "
-	LogExtendedProtocolExecute    = "LOG:  execute <unnamed>: "
+	LogConnectionAuthorized       = "connection authorized: "
+	LogConnectionReceived         = "connection received: "
+	LogConnectionDisconnect       = "disconnection: "
+	LogStatement                  = "statement:"
+	LogDuration                   = "duration: "
+	CheckpointStarting            = "checkpoint starting: "
+	CheckpointComplete            = "checkpoint complete: "
+	LogExtendedProtocolExecute    = "execute <unnamed>: "
 	LogExtendedProtocolParameters = "DETAIL:  parameters: "
-	LogNamedPrepareExecute        = "LOG:  execute "
+	LogNamedPrepareExecute        = "execute "
 	LogDetail                     = "DETAIL:  "
 	LogError                      = "ERROR:  "
 )
 
-// ParseItem constructs a Item from Postgres errlogs. The format we accept is
-// log_line_prefix='%m|%u|%d|%c|', so we can split by | to discover each component.
-//
-// The unbounds map allows retrieval of an Execute that was previously parsed for a
-// session, as we expect following log lines to complete the Execute with the parameters
-// it should use.
-func ParseItem(logline string, unbounds map[SessionID]*Execute, buffer []byte) (Item, error) {
-	tokens := strings.SplitN(logline, "|", 5)
-	if len(tokens) != 5 {
+// ParseItem constructs a Item from Postgres errlogs. This expects
+// default csvlog format from RDS
+func ParseItem(logline []string) (Item, error) {
+	tokens := logline
+	if len(tokens) < 12 {
 		return nil, fmt.Errorf("failed to parse log line: '%s'", logline)
 	}
 
@@ -145,8 +153,7 @@ func ParseItem(logline string, unbounds map[SessionID]*Execute, buffer []byte) (
 		return nil, fmt.Errorf("failed to parse log timestamp: '%s': %v", tokens[0], err)
 	}
 
-	// 2018-06-04 13:00:52.366 UTC|postgres|postgres|5b153804.964|<msg>
-	user, database, session, msg := tokens[1], tokens[2], tokens[3], tokens[4]
+	user, database, session, msg := tokens[1], tokens[2], tokens[5], tokens[13]
 
 	details := Details{
 		Timestamp: ts,
@@ -155,109 +162,112 @@ func ParseItem(logline string, unbounds map[SessionID]*Execute, buffer []byte) (
 		Database:  database,
 	}
 
-	// LOG:  duration: 0.043 ms
+	// duration: 0.043 ms
 	// Duration logs mark completion of replay items, and are not of interest for
 	// reproducing traffic. We should only take an action if there exists an unbound item
 	// for this session, as this log line will confirm the unbound query has no parameters.
 	if strings.HasPrefix(msg, LogDuration) {
-		if unbound, ok := unbounds[details.SessionID]; ok {
-			delete(unbounds, details.SessionID)
-			return unbound.Bind(nil), nil
-		}
-
 		return nil, nil
 	}
 
-	// LOG:  statement: select pg_reload_conf();
+	// statement: select pg_reload_conf();
 	if strings.HasPrefix(msg, LogStatement) {
 		return Statement{details, strings.TrimPrefix(msg, LogStatement)}, nil
 	}
 
-	// LOG:  execute <unnamed>: select pg_sleep($1)
-	// An execute log represents a potential statement. When running the extended protocol,
-	// even queries that don't have any arguments will be sent as an unamed prepared
-	// statement. We need to wait for a following DETAIL or duration log to confirm the
-	// statement has been executed.
-	if strings.HasPrefix(msg, LogExtendedProtocolExecute) {
-		query := strings.TrimPrefix(msg, LogExtendedProtocolExecute)
-		unbounds[details.SessionID] = &Execute{details, query}
+	// // LOG:  execute <unnamed>: select pg_sleep($1)
+	// // An execute log represents a potential statement. When running the extended protocol,
+	// // even queries that don't have any arguments will be sent as an unamed prepared
+	// // statement. We need to wait for a following DETAIL or duration log to confirm the
+	// // statement has been executed.
+	// if strings.HasPrefix(msg, LogExtendedProtocolExecute) {
+	// 	query := strings.TrimPrefix(msg, LogExtendedProtocolExecute)
+	// 	unbounds[details.SessionID] = &Execute{details, query}
 
-		return nil, nil
-	}
+	// 	return nil, nil
+	// }
 
-	// LOG:  execute name: select pg_sleep($1)
-	if strings.HasPrefix(msg, LogNamedPrepareExecute) {
-		preambleNameColonQuery := msg
-		nameColonQuery := strings.TrimPrefix(preambleNameColonQuery, LogNamedPrepareExecute)
-		query := strings.SplitN(nameColonQuery, ":", 2)[1]
+	// // LOG:  execute name: select pg_sleep($1)
+	// if strings.HasPrefix(msg, LogNamedPrepareExecute) {
+	// 	preambleNameColonQuery := msg
+	// 	nameColonQuery := strings.TrimPrefix(preambleNameColonQuery, LogNamedPrepareExecute)
+	// 	query := strings.SplitN(nameColonQuery, ":", 2)[1]
 
-		// TODO: This doesn't exactly replicate what we'd expect from named prepares. Instead
-		// of creating a genuine named prepare, we implement them as unnamed prepared
-		// statements instead. If this parse signature allowed us to return arbitrary items
-		// then we'd be able to create an initial prepare statement followed by a matching
-		// execute, but we can hold off doing this until it becomes a problem.
-		unbounds[details.SessionID] = &Execute{details, query}
+	// 	// TODO: This doesn't exactly replicate what we'd expect from named prepares. Instead
+	// 	// of creating a genuine named prepare, we implement them as unnamed prepared
+	// 	// statements instead. If this parse signature allowed us to return arbitrary items
+	// 	// then we'd be able to create an initial prepare statement followed by a matching
+	// 	// execute, but we can hold off doing this until it becomes a problem.
+	// 	unbounds[details.SessionID] = &Execute{details, query}
 
-		return nil, nil
-	}
+	// 	return nil, nil
+	// }
 
-	// DETAIL:  parameters: $1 = '1', $2 = NULL
-	if strings.HasPrefix(msg, LogExtendedProtocolParameters) {
-		if unbound, ok := unbounds[details.SessionID]; ok {
-			parameters, err := ParseBindParameters(strings.TrimPrefix(msg, LogExtendedProtocolParameters), buffer)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse bind parameters: %s", err.Error())
-			}
+	// // DETAIL:  parameters: $1 = '1', $2 = NULL
+	// if strings.HasPrefix(msg, LogExtendedProtocolParameters) {
+	// 	if unbound, ok := unbounds[details.SessionID]; ok {
+	// 		parameters, err := ParseBindParameters(strings.TrimPrefix(msg, LogExtendedProtocolParameters), buffer)
+	// 		if err != nil {
+	// 			return nil, fmt.Errorf("failed to parse bind parameters: %s", err.Error())
+	// 		}
 
-			// Remove the unbound from our cache and bind it
-			delete(unbounds, details.SessionID)
-			return unbound.Bind(parameters), nil
-		}
+	// 		// Remove the unbound from our cache and bind it
+	// 		delete(unbounds, details.SessionID)
+	// 		return unbound.Bind(parameters), nil
+	// 	}
 
-		// It's quite normal for us to get here, as Postgres will log the following when
-		// log_min_duration_statement = 0:
-		//
-		//   1. LOG:  duration: 0.XXX ms  parse name: <statement>
-		//   2. LOG:  duration: 0.XXX ms  bind name: <statement>
-		//   3. DETAIL:  parameters: $1 = '<param>', $2 = '<param>', ...
-		//   4. LOG:  execute name: <statement>
-		//   5. DETAIL:  parameters: $1 = '<param>', $2 = '<param>', ...
-		//
-		// The 3rd and 5th entry are the same, but we expect to be matching our detail against
-		// a prior execute log-line. This is just an artifact of Postgres extended query
-		// protocol and the activation of two logging systems which duplicate the same entry.
-		return nil, fmt.Errorf("cannot process bind parameters without previous execute item: %s", msg)
-	}
+	// 	// It's quite normal for us to get here, as Postgres will log the following when
+	// 	// log_min_duration_statement = 0:
+	// 	//
+	// 	//   1. LOG:  duration: 0.XXX ms  parse name: <statement>
+	// 	//   2. LOG:  duration: 0.XXX ms  bind name: <statement>
+	// 	//   3. DETAIL:  parameters: $1 = '<param>', $2 = '<param>', ...
+	// 	//   4. LOG:  execute name: <statement>
+	// 	//   5. DETAIL:  parameters: $1 = '<param>', $2 = '<param>', ...
+	// 	//
+	// 	// The 3rd and 5th entry are the same, but we expect to be matching our detail against
+	// 	// a prior execute log-line. This is just an artifact of Postgres extended query
+	// 	// protocol and the activation of two logging systems which duplicate the same entry.
+	// 	return nil, fmt.Errorf("cannot process bind parameters without previous execute item: %s", msg)
+	// }
 
-	// LOG:  connection authorized: user=postgres database=postgres
-	if strings.HasPrefix(msg, LogConnectionAuthorized) {
-		return Connect{details}, nil
-	}
+	// // LOG:  connection authorized: user=postgres database=postgres
+	// if strings.HasPrefix(msg, LogConnectionAuthorized) {
+	// 	return Connect{details}, nil
+	// }
 
-	// LOG:  disconnection: session time: 0:00:03.861 user=postgres database=postgres host=192.168.99.1 port=51529
-	if strings.HasPrefix(msg, LogConnectionDisconnect) {
-		return Disconnect{details}, nil
-	}
+	// // LOG:  disconnection: session time: 0:00:03.861 user=postgres database=postgres host=192.168.99.1 port=51529
+	// if strings.HasPrefix(msg, LogConnectionDisconnect) {
+	// 	return Disconnect{details}, nil
+	// }
 
-	// LOG:  connection received: host=192.168.99.1 port=52188
-	// We use connection authorized for replay, and can safely ignore connection received
-	if strings.HasPrefix(msg, LogConnectionReceived) {
-		return nil, nil
-	}
+	// // LOG:  connection received: host=192.168.99.1 port=52188
+	// // We use connection authorized for replay, and can safely ignore connection received
+	// if strings.HasPrefix(msg, LogConnectionReceived) {
+	// 	return nil, nil
+	// }
 
-	// ERROR:  invalid value for parameter \"log_destination\": \"/var\"
-	// We don't replicate errors as this should be the minority of our traffic. Can safely
-	// ignore.
-	if strings.HasPrefix(msg, LogError) {
-		return nil, nil
-	}
+	// // ERROR:  invalid value for parameter \"log_destination\": \"/var\"
+	// // We don't replicate errors as this should be the minority of our traffic. Can safely
+	// // ignore.
+	// if strings.HasPrefix(msg, LogError) {
+	// 	return nil, nil
+	// }
 
-	// DETAIL:  Unrecognized key word: \"/var/log/postgres/postgres.log\"
-	// The previous condition catches the extended query bind detail statements, and any
-	// other DETAIL logs we can safely ignore.
-	if strings.HasPrefix(msg, LogDetail) {
-		return nil, nil
-	}
+	// if strings.HasPrefix(msg, CheckpointStarting) {
+	// 	return nil, nil
+	// }
+
+	// if strings.HasPrefix(msg, CheckpointComplete) {
+	// 	return nil, nil
+	// }
+
+	// // DETAIL:  Unrecognized key word: \"/var/log/postgres/postgres.log\"
+	// // The previous condition catches the extended query bind detail statements, and any
+	// // other DETAIL logs we can safely ignore.
+	// if strings.HasPrefix(msg, LogDetail) {
+	// 	return nil, nil
+	// }
 
 	return nil, fmt.Errorf("no parser matches line: %s", msg)
 }
@@ -265,7 +275,7 @@ func ParseItem(logline string, unbounds map[SessionID]*Execute, buffer []byte) (
 // ParseBindParameters constructs an interface slice from the suffix of a DETAIL parameter
 // Postgres errlog. An example input to this function would be:
 //
-// $1 = '', $2 = '30', $3 = '2018-05-03 10:26:27.905086+00'
+// $1 = ”, $2 = '30', $3 = '2018-05-03 10:26:27.905086+00'
 //
 // ...and this would be parsed into []interface{"", "30", "2018-05-03 10:26:27.905086+00"}
 func ParseBindParameters(input string, buffer []byte) ([]interface{}, error) {
@@ -345,8 +355,9 @@ func findClosingTag(input, marker, escapeSequence string) (idx int) {
 // from Postgres logs. Postgres errlog format looks like this:
 //
 // 2018-05-03|gc|LOG:  duration: 0.096 ms  parse <unnamed>:
-//					DELETE FROM que_jobs
-// 					WHERE queue    = $1::text
+//
+//	DELETE FROM que_jobs
+//	WHERE queue    = $1::text
 //
 // ...where a log line can spill over multiple lines, with trailing lines marked with a
 // preceding \t.

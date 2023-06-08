@@ -13,10 +13,9 @@ import (
 	kitlog "github.com/go-kit/kit/log"
 	level "github.com/go-kit/kit/log/level"
 	"github.com/gocardless/pgreplay-go/pkg/pgreplay"
+	"github.com/jackc/pgx"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-
-	"github.com/jackc/pgx"
 )
 
 var logger kitlog.Logger

@@ -113,7 +113,11 @@ func (d *Database) Consume(items chan Item) (chan error, chan error) {
 // establish a new connection and decremented when we disconnect.
 func (d *Database) Connect(item Item) (*Conn, error) {
 	cfg := d.ConnConfig
-	cfg.Database, cfg.User = item.GetDatabase(), item.GetUser()
+	// TODO(benji): this line copied the databasename and user from the query item
+	// but for some reason it was the wrong database and user. I'm not sure why.
+	// disabling this makes it use the database and user that is passed in when launching
+	// run
+	// cfg.Database, cfg.User = item.Database, item.User
 	cfg.CustomConnInfo = func(_ *pgx.Conn) (*pgtype.ConnInfo, error) {
 		return d.ConnInfo.DeepCopy(), nil
 	}

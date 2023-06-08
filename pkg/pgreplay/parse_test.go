@@ -38,70 +38,79 @@ var _ = Describe("ParseErrlog", func() {
 		Entry(
 			"Extended protocol with duration logs",
 			`
-2019-02-25 15:08:27.222 GMT|[unknown]|[unknown]|5c7404eb.d6bd|LOG:  connection received: host=127.0.0.1 port=59103
-2019-02-25 15:08:27.222 GMT|alice|pgreplay_test|5c7404eb.d6bd|LOG:  connection authorized: user=alice database=pgreplay_test
-2019-02-25 15:08:27.222 GMT|alice|pgreplay_test|5c7404eb.d6bd|LOG:  duration: 0.968 ms  parse <unnamed>: select t.oid
-2019-02-25 15:08:27.222 GMT|alice|pgreplay_test|5c7404eb.d6bd|LOG:  duration: 1.100 ms  bind <unnamed>: select t.oid
-2019-02-25 15:08:27.222 GMT|alice|pgreplay_test|5c7404eb.d6bd|LOG:  execute <unnamed>: select t.oid
-2019-02-25 15:08:27.222 GMT|alice|pgreplay_test|5c7404eb.d6bd|LOG:  duration: 0.326 ms
-
-2019-02-25 15:08:27.222 GMT|alice|pgreplay_test|5c7404eb.d6bd|LOG:  duration: 0.042 ms  parse <unnamed>: insert into logs (author, message) ($1, $2)
-2019-02-25 15:08:27.222 GMT|alice|pgreplay_test|5c7404eb.d6bd|LOG:  duration: 0.045 ms  bind <unnamed>: insert into logs (author, message) ($1, $2)
-2019-02-25 15:08:27.222 GMT|alice|pgreplay_test|5c7404eb.d6bd|DETAIL:  parameters: $1 = 'alice', $2 = 'bob'
-2019-02-25 15:08:27.222 GMT|alice|pgreplay_test|5c7404eb.d6bd|LOG:  execute <unnamed>: insert into logs (author, message) ($1, $2)
-2019-02-25 15:08:27.222 GMT|alice|pgreplay_test|5c7404eb.d6bd|DETAIL:  parameters: $1 = 'alice', $2 = 'bob'
-2019-02-25 15:08:27.222 GMT|alice|pgreplay_test|5c7404eb.d6bd|LOG:  duration: 0.042 ms`,
+2019-02-25 15:08:27.222 GMT,"postgres","postgres",7283,"199.167.158.43:57426",6480e39e.1c73,6374,"SELECT",2019-02-25 15:08:27.222 GMT,4/286618,0,LOG,00000,"duration: 71.963 ms",,,,,,,,,"","client backend"
+2019-02-25 15:08:27.222 GMT,"postgres","postgres",7283,"199.167.158.43:57426",6480e39e.1c73,6375,"idle in transaction",2019-02-25 15:08:27.222 GMT,4/286618,0,LOG,00000,"statement:
+						SELECT p.name, r.rating
+						FROM products p
+						JOIN reviews r ON p.id = r.product_id
+						WHERE r.rating IN (
+						SELECT MIN(rating) FROM reviews
+						UNION
+						SELECT MAX(rating) FROM reviews
+						);
+				",,,,,,,,,"","client backend"
+2019-02-25 15:08:27.222 GMT,"postgres","postgres",7283,"199.167.158.43:57426",6480e39e.1c73,6376,"SELECT",2019-02-25 15:08:27.222 GMT,4/286618,0,LOG,00000,"duration: 53.774 ms",,,,,,,,,"","client backend"
+2019-02-25 15:08:27.222 GMT,"postgres","postgres",7283,"199.167.158.43:57426",6480e39e.1c73,6377,"idle in transaction",2019-02-25 15:08:27.222 GMT,4/286618,0,LOG,00000,"statement:
+						SELECT name, email
+						FROM users
+						WHERE email LIKE '@gmail.com';
+				",,,,,,,,,"","client backend"`,
 			[]Item{
-				Connect{
-					Details{
+				// Connect{
+				// 	Details{
+				// 		Timestamp: time20190225,
+				// 		SessionID: "6480e39e.1c73",
+				// 		User:      "postgres",
+				// 		Database:  "postgres",
+				// 	},
+				// },
+				Statement{
+					Details: Details{
 						Timestamp: time20190225,
-						SessionID: "5c7404eb.d6bd",
-						User:      "alice",
-						Database:  "pgreplay_test",
+						SessionID: "6480e39e.1c73",
+						User:      "postgres",
+						Database:  "postgres",
 					},
+					Query: "\n\t\t\t\t\tSELECT p.name, r.rating\n\t\t\t\t\tFROM products p\n\t\t\t\t\tJOIN reviews r ON p.id = r.product_id\n\t\t\t\t\tWHERE r.rating IN (\n\t\t\t\t\tSELECT MIN(rating) FROM reviews\n\t\t\t\t\tUNION\n\t\t\t\t\tSELECT MAX(rating) FROM reviews\n\t\t\t\t\t);\n\t\t\t",
 				},
-				BoundExecute{
-					Execute: Execute{
-						Details: Details{
-							Timestamp: time20190225,
-							SessionID: "5c7404eb.d6bd",
-							User:      "alice",
-							Database:  "pgreplay_test",
-						},
-						Query: "select t.oid",
+				Statement{
+					Details: Details{
+						Timestamp: time20190225,
+						SessionID: "6480e39e.1c73",
+						User:      "postgres",
+						Database:  "postgres",
 					},
-					Parameters: []interface{}{},
+					Query: "\n\t\t\t\t\tSELECT name, email\n\t\t\t\t\tFROM users\n\t\t\t\t\tWHERE email LIKE '@gmail.com';\n\t\t\t",
 				},
-				BoundExecute{
-					Execute: Execute{
-						Details: Details{
-							Timestamp: time20190225,
-							SessionID: "5c7404eb.d6bd",
-							User:      "alice",
-							Database:  "pgreplay_test",
-						},
-						Query: "insert into logs (author, message) ($1, $2)",
-					},
-					Parameters: []interface{}{"alice", "bob"},
-				},
+				// BoundExecute{
+				// 	Execute: Execute{
+				// 		Details: Details{
+				// 			Timestamp: time20190225,
+				// 			SessionID: "6480e39e.1c73",
+				// 			User:      "postgres",
+				// 			Database:  "postgres",
+				// 		},
+				// 		Query: "insert into logs (author, message) ($1, $2)",
+				// 	},
+				// },
 			},
 		),
 	)
 })
 
-var _ = Describe("ParseBindParameters", func() {
-	DescribeTable("Parses",
-		func(input string, expected []interface{}) {
-			Expect(ParseBindParameters(input, nil)).To(
-				BeEquivalentTo(expected),
-			)
-		},
-		Entry("Single string parameter", "$1 = 'hello'", []interface{}{"hello"}),
-		Entry("Single escaped string parameter", "$1 = 'hel''lo'", []interface{}{"hel'lo"}),
-		Entry("NULL to nil", "$2 = NULL", []interface{}{nil}),
-		Entry("Many string parameters", "$1 = 'hello', $2 = 'world'", []interface{}{"hello", "world"}),
-	)
-})
+// var _ = Describe("ParseBindParameters", func() {
+// 	DescribeTable("Parses",
+// 		func(input string, expected []interface{}) {
+// 			Expect(ParseBindParameters(input, nil)).To(
+// 				BeEquivalentTo(expected),
+// 			)
+// 		},
+// 		Entry("Single string parameter", "$1 = 'hello'", []interface{}{"hello"}),
+// 		Entry("Single escaped string parameter", "$1 = 'hel''lo'", []interface{}{"hel'lo"}),
+// 		Entry("NULL to nil", "$2 = NULL", []interface{}{nil}),
+// 		Entry("Many string parameters", "$1 = 'hello', $2 = 'world'", []interface{}{"hello", "world"}),
+// 	)
+// })
 
 var _ = Describe("LogScanner", func() {
 	DescribeTable("Scans",
@@ -118,35 +127,39 @@ var _ = Describe("LogScanner", func() {
 		},
 		Entry(
 			"Single lines",
-			`2010-12-31 10:59:52.243 UTC|postgres`,
+			`2019-02-25 15:08:27.222 GMT,"postgres","postgres",7283,"199.167.158.43:57426",6480e39e.1c73,6376,"SELECT",2019-02-25 15:08:27.222 GMT,4/286618,0,LOG,00000,"duration: 53.774 ms",,,,,,,,,"","client backend"`,
 			[]string{
-				`2010-12-31 10:59:52.243 UTC|postgres`,
+				`2019-02-25 15:08:27.222 GMT,"postgres","postgres",7283,"199.167.158.43:57426",6480e39e.1c73,6376,"SELECT",2019-02-25 15:08:27.222 GMT,4/286618,0,LOG,00000,"duration: 53.774 ms",,,,,,,,,"","client backend"`,
 			},
 		),
 		Entry(
 			"Multiple lines",
 			`
-2010-12-31 10:59:52.243 UTC|postgres
-2010-12-31 10:59:53.000 UTC|paysvc`,
+2019-02-25 15:08:27.222 GMT,"postgres","postgres",7283,"199.167.158.43:57426",6480e39e.1c73,6374,"SELECT",2019-02-25 15:08:27.222 GMT,4/286618,0,LOG,00000,"duration: 71.963 ms",,,,,,,,,"","client backend"
+2019-02-25 15:08:27.222 GMT,"postgres","postgres",7283,"199.167.158.43:57426",6480e39e.1c73,6376,"SELECT",2019-02-25 15:08:27.222 GMT,4/286618,0,LOG,00000,"duration: 53.774 ms",,,,,,,,,"","client backend"`,
 			[]string{
-				`2010-12-31 10:59:52.243 UTC|postgres`,
-				`2010-12-31 10:59:53.000 UTC|paysvc`,
+				`2019-02-25 15:08:27.222 GMT,"postgres","postgres",7283,"199.167.158.43:57426",6480e39e.1c73,6374,"SELECT",2019-02-25 15:08:27.222 GMT,4/286618,0,LOG,00000,"duration: 71.963 ms",,,,,,,,,"","client backend"`,
+				`2019-02-25 15:08:27.222 GMT,"postgres","postgres",7283,"199.167.158.43:57426",6480e39e.1c73,6376,"SELECT",2019-02-25 15:08:27.222 GMT,4/286618,0,LOG,00000,"duration: 53.774 ms",,,,,,,,,"","client backend"`,
 			},
 		),
 		Entry(
 			"Multi-line lines",
 			`
-2018-05-03|gc|LOG:  statement: select max(id),min(id) from pg2pubsub.update_log;
-2018-05-03|gc|LOG:  duration: 0.096 ms  parse <unnamed>:
-	DELETE FROM que_jobs
-	WHERE queue    = $1::text
-
-2018-05-03|gc|LOG:  duration: 0.248 ms
+2019-02-25 15:08:27.222 GMT,"postgres","postgres",7283,"199.167.158.43:57426",6480e39e.1c73,6374,"SELECT",2019-02-25 15:08:27.222 GMT,4/286618,0,LOG,00000,"duration: 71.963 ms",,,,,,,,,"","client backend"
+2019-02-25 15:08:27.222 GMT,"postgres","postgres",7283,"199.167.158.43:57426",6480e39e.1c73,6375,"idle in transaction",2019-02-25 15:08:27.222 GMT,4/286618,0,LOG,00000,"statement:
+						SELECT p.name, r.rating
+						FROM products p
+						JOIN reviews r ON p.id = r.product_id
+						WHERE r.rating IN (
+						SELECT MIN(rating) FROM reviews
+						UNION
+						SELECT MAX(rating) FROM reviews
+						);
+				",,,,,,,,,"","client backend"
 			`,
 			[]string{
-				`2018-05-03|gc|LOG:  statement: select max(id),min(id) from pg2pubsub.update_log;`,
-				"2018-05-03|gc|LOG:  duration: 0.096 ms  parse <unnamed>:\nDELETE FROM que_jobs\nWHERE queue    = $1::text",
-				`2018-05-03|gc|LOG:  duration: 0.248 ms`,
+				`2019-02-25 15:08:27.222 GMT,"postgres","postgres",7283,"199.167.158.43:57426",6480e39e.1c73,6374,"SELECT",2019-02-25 15:08:27.222 GMT,4/286618,0,LOG,00000,"duration: 71.963 ms",,,,,,,,,"","client backend"`,
+				"2019-02-25 15:08:27.222 GMT,\"postgres\",\"postgres\",7283,\"199.167.158.43:57426\",6480e39e.1c73,6375,\"idle in transaction\",2019-02-25 15:08:27.222 GMT,4/286618,0,LOG,00000,\"statement:\n\t\t\t\t\tSELECT p.name, r.rating\n\t\t\t\t\tFROM products p\n\t\t\t\t\tJOIN reviews r ON p.id = r.product_id\n\t\t\t\t\tWHERE r.rating IN (\n\t\t\t\t\tSELECT MIN(rating) FROM reviews\n\t\t\t\t\tUNION\n\t\t\t\t\tSELECT MAX(rating) FROM reviews\n\t\t\t\t\t);\n\t\t\t\",,,,,,,,,\"\",\"client backend\"",
 			},
 		),
 	)

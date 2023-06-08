@@ -19,79 +19,29 @@ You have an existing cluster and want to trial new hardware/validate
 configuration changes/move infrastructure providers. Your production services
 depend on ensuring the new change is safe and doesn't degrade performance.
 
-### 1. Configure production logging
+### 1. Configure source RDS logging
 
-First capture the logs from your running Postgres instance. You may need to add
-additional storage to your machine before starting- we often attach a new disk
-and change our log location to that disk for experiments.
+First capture the logs from your running Postgres instance.
 
-You can turn on logging in a compatible format like so:
-
-```sql
-ALTER SYSTEM SET log_directory='/postgres-logs';
-ALTER SYSTEM SET log_connections='on';
-ALTER SYSTEM SET log_disconnections='on';
-ALTER SYSTEM SET log_line_prefix='%m|%u|%d|%c|';
-ALTER SYSTEM SET log_min_error_statement='log';
-ALTER SYSTEM SET log_min_messages='error';
-ALTER SYSTEM SET log_statement='all';
-ALTER SYSTEM SET log_min_duration_statement=0; 
-SELECT pg_reload_conf();
-```
-
-### 2. Take snapshot
-
-Now we're emitting logs we need to snapshot the database so that we can later
-restore it to the same moment in time on our benchmark clusters. If you're
-running in a cloud provider with disk snapshot facilities then this is likely
-the easiest of options (remember to checkpoint first, to reduce recovery time)
-but you can also achieve this using `pg_basebackup` and point-in-time recovery
-configuration, or by taking a physical copy of a paused replica.
-
-Whatever method used must produce an image that can be restored into new
-machines later.
-
-### 3. Extract and process logs
-
-Once you've captured logs for your desired benchmark window, you can optionally
-pre-process them to create a more realistic sample. Complex database
-interactions are likely to have transactions that may fail when we play them
-back out-of-order. Recalling that our primary goal is to create representative
-load on the database, not a totally faithful replay, we suggest applying the
-following filters:
+Set these parametes on your RDS database:
 
 ```
-$ cat postgresql.log \
-| pv --progress --rate --size "$(du postgresql.log | cut -f1)" \
-| grep -v "LOG:  statement: BEGIN" \
-| grep -v "LOG:  statement: COMMIT" \
-| grep -v "LOG:  statement: ROLLBACK TO SAVEPOINT" \
-| grep -v "LOG:  statement: SAVEPOINT" \
-| grep -v "LOG:  statement: RELEASE SAVEPOINT" \
-| grep -v "LOG:  statement: SET LOCAL" \
-| sed 's/pg_try_advisory_lock/bool/g' \
-| sed 's/pg_advisory_unlock/pg_advisory_unlock_shared/g' \
-> postgresql-filtered.log
+log_destination = csvlog
+log_connections = 1
+log_disconnections = 1
+log_min_error_statement = log
+log_min_messages = error
+log_statement = all
+log_min_duration_statement = 0
 ```
 
-By removing transactions we avoid skipping work if any of the transaction
-queries were to fail - the same goes for savepoints.
-We remove any `SET LOCAL` statements, as having removed transactions these
-configuration settings would be present for the duration of the connection.
-We then modify any advisory lock queries to be shared, preventing us from
-needlessly blocking while still requiring the database to perform similar levels
-of work as the exclusive locking.
+And then press apply and wait a couple minutes.
 
-These transformations mean our replayed queries won't exactly simulate what we
-saw in production, but that's why we'll compare the performance of these
-filtered logs against the two clusters rather than the original performance of
-the production cluster.
-
-### 4. pgreplay-go against copy of production cluster
+### 2. pgreplay-go against copy of production cluster
 
 Now create a copy of the original production cluster using the snapshot from
 (2). The aim is to have a cluster that exactly replicates production, providing
-a reliable control for our experiment. 
+a reliable control for our experiment.
 
 The goal of this run will be to output Postgres logs that can be parsed by
 [pgBadger](https://github.com/darold/pgbadger) to provide an analysis of the

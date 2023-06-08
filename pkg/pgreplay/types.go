@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx"
-	"github.com/json-iterator/go"
+	jsoniter "github.com/json-iterator/go"
 )
 
 var json = jsoniter.ConfigCompatibleWithStandardLibrary
